@@ -5,6 +5,8 @@ import time
 import pprint
 
 import keras
+import cv2
+cv = cv2
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
@@ -13,6 +15,7 @@ from keras.callbacks import (History, LearningRateScheduler, ModelCheckpoint,
 from keras.models import Model
 from keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
+import matplotlib.pyplot as plt
 
 from cv_helpers import *
 from models import make_model
@@ -93,6 +96,7 @@ if not args.load:
         loss="binary_crossentropy",
         optimizer=Adam(config.lr),
         metrics=[
+            keras.metrics.Accuracy(),
             keras.metrics.TruePositives(),
             keras.metrics.TrueNegatives(),
             keras.metrics.FalsePositives(),
@@ -137,19 +141,38 @@ if not args.load:
         H = callbacks[0]
     end = time.time()
     
-    step = max(1, len(H.history['loss']) // 6)
-    save_history(H, args.name, end-start, config, marker_step=step)
+    # save training stats
+    os.makedirs("stats/", exist_ok=True)
+    plt.plot(H.history["loss"])
+    plt.plot(H.history["val_loss"])
+    plt.legend(['train', 'val'])
+    plt.title("Loss")
+    plt.savefig("stats/"+args.name+"/loss.png")
 
+    plt.plot(H.history["accuracy"])
+    plt.plot(H.history["val_accuracy"])
+    plt.legend(['train', 'val'])
+    plt.title("Accuracy")
+    plt.savefig("stats/"+args.name+"/accuracy.png")
+
+    statsfile_name = "stats/" + args.name + "/stats.txt"
+    secs = end - start
+    epochs_ran = len(H.history["loss"])
+    with open(statsfile_name, "w") as f:
+        f.write(args.name + "\n\n")
+        f.write("Epochs ran: {}\n".format(epochs_ran))
+        f.write("Secs per epoch: {}\n".format(secs / epochs_ran))
+        f.write("Minutes total: {}\n".format(secs / 60))
+        f.write("Hours total: {}\n".format(secs / 3600))
+    config.write_to_file(statsfile_name)
 
 
 print("Loading model...")
 model = keras.models.load_model("models/"+args.name+".hdf5")
 
-
 if args.load:
     # if we are just loading and have not trained
     model.summary()
-
 
 
 """
