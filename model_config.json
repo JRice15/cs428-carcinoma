@@ -1,0 +1,8 @@
+{
+    "model": "xception",
+    "batchsize": 32,
+    "lr": 0.001,
+    "epochs": 40,
+    "lr_sched_freq": 6,
+    "lr_sched_factor": 0.2
+}
