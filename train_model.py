@@ -77,11 +77,30 @@ with h5.File(x_test_path,'r') as f:
   xtest = f['X'][:,1:49,1:49]
   ytest = f['y'][:]
 
-xtrain, xval, ytrain, yval = train_test_split(xtrain, ytrain, test_size=0.10, shuffle=True)
+#xtrain = xtrain / 255.0
+#xtest = xtest / 255.0
+split = -(len(xtrain) // 10)
+xtrain, xval = xtrain[:split], xtrain[split:]
+ytrain, yval = ytrain[:split], ytrain[split:]
 
 img_shape = xtrain[0].shape
-print("img_shape", img_shape)
+print("img shape", img_shape)
+print("img range", xtrain.min(), xtrain.max())
 print(len(xtrain), "training images,", len(xval), "validation,", len(xtest), "test")
+
+def train_gen():
+    bs = config.batchsize
+    i = 0
+    while True:
+        x = xtrain[i:i+bs]
+        y = ytrain[i:i+bs]
+        if len(x) < bs:
+            i = 0
+            x = np.concatenate(x, xtrain[0:bs-len(x)])
+            y = np.concatenate(y, ytrain[0:bs-len(x)])
+        i += bs
+        yield x, y
+
 
 """
 models
@@ -143,7 +162,7 @@ def my_xception(input_tensor):
     x = layers.Conv2D(32, (3, 3),
                       strides=(2, 2),
                       use_bias=False,
-                      name='block1_conv1')(img_input)
+                      name='block1_conv1')(input_tensor)
     x = layers.BatchNormalization(axis=channel_axis, name='block1_conv1_bn')(x)
     x = layers.Activation('relu', name='block1_conv1_act')(x)
     x = layers.Conv2D(64, (3, 3), use_bias=False, name='block1_conv2')(x)
@@ -278,10 +297,7 @@ def my_xception(input_tensor):
     x = ReLU()(x)
     x = Dropout(0.5)(x)
 
-    # Create model.
-    model = Model(input_tensor, x, name='xception')
-
-    return model
+    return x
 
 
 def preprocess_input(x, **kwargs):
@@ -342,7 +358,6 @@ def make_model(name, input_shape):
     x = Dropout(0.4)(x)
 
     x = Dense(1)(x)
-    x = ReLU()(x)
     x = Activation('sigmoid')(x)
 
     return Model(inpt, x)
@@ -362,7 +377,7 @@ if not args.load:
         loss="binary_crossentropy",
         optimizer=Adam(config.lr),
         metrics=[
-            keras.metrics.Accuracy(),
+            keras.metrics.BinaryAccuracy(),
             keras.metrics.TruePositives(),
             keras.metrics.TrueNegatives(),
             keras.metrics.FalsePositives(),
@@ -389,12 +404,12 @@ if not args.load:
     start = time.time()
     try:
         H = model.fit(
-            xtrain,
-            ytrain,
+            x=train_gen(),
             validation_data=(xval, yval),
             batch_size=config.batchsize,
             epochs=config.epochs,
             verbose=1,
+            steps_per_epoch=1000,
             callbacks=callbacks,
         )
     except KeyboardInterrupt:
@@ -403,7 +418,7 @@ if not args.load:
     end = time.time()
     
     # save training stats
-    os.makedirs("stats/", exist_ok=True)
+    os.makedirs("stats/"+args.name, exist_ok=True)
     plt.plot(H.history["loss"])
     plt.plot(H.history["val_loss"])
     plt.legend(['train', 'val'])
