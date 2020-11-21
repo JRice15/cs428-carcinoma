@@ -79,7 +79,7 @@ with h5.File(x_test_path,'r') as f:
   xtest = f['X'][:,1:49,1:49]
   ytest = f['y'][:]
 
-xtrain, xval, ytrain, yval = train_test_split(xtrain, ytrain, validation_split=0.10, shuffle=True)
+xtrain, xval, ytrain, yval = train_test_split(xtrain, ytrain, test_size=0.10, shuffle=True)
 
 img_shape = xtrain[0].shape
 print("img_shape", img_shape)
