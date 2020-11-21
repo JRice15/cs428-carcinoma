@@ -1,25 +1,34 @@
 import argparse
 import json
 import os
-import time
 import pprint
+import time
 
-import keras
 import cv2
 cv = cv2
+import logging
+
+import keras
+import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from keras import backend as K
-from keras.callbacks import (History, LearningRateScheduler, ModelCheckpoint,
-                             ReduceLROnPlateau, EarlyStopping)
+from keras import layers
+from keras.applications import imagenet_utils
+from keras.callbacks import (EarlyStopping, History, LearningRateScheduler,
+                             ModelCheckpoint, ReduceLROnPlateau)
+from keras.layers import (Activation, Add, BatchNormalization, Concatenate,
+                          Conv2D, Dense, Dropout, Flatten,
+                          GlobalAveragePooling2D, Input, Lambda, MaxPooling2D,
+                          Multiply, ReLU, Reshape, Softmax)
 from keras.models import Model
 from keras.optimizers import Adam
 from sklearn.model_selection import train_test_split
-import matplotlib.pyplot as plt
 
-from cv_helpers import *
-from models import make_model
-from save_stats import save_history
+if not tf.__version__.startswith("2.2") or not keras.__version__.startswith("2.4.3"):
+    print("This code was written with TensorFlow 2.2 and Keras 2.4.3, and may fail on your version:")
+print("tf:", tf.__version__)
+print("keras:", keras.__version__)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--name",required=True)
@@ -31,7 +40,7 @@ args = parser.parse_args()
 class TrainConfig:
 
     def __init__(self, epochs, model, batchsize, lr, lr_sched_freq, 
-            lr_sched_factor, loss):
+            lr_sched_factor):
         self.epochs = epochs
         self.model = model
         self.batchsize = batchsize
@@ -56,35 +65,106 @@ config = TrainConfig(**config_dict)
 load data
 """
 
-x = []
-y = []
-for name in os.listdir("data"):
-    for label in os.listdir("data/"+name):
-        ylabel = int(label)
-        for imname in os.listdir("data/"+name+"/"+label):
-            path = "data/"+name+"/"+label+"/"+imname
-            im = cv.imread(path)
-            x.append(im)
-            y.append(ylabel)
+from keras.utils import get_file
 
-x = np.array(x)
-y = np.array(y)
+x_train_path = get_file('idc_train.h5','https://storage.googleapis.com/cpe428-fall2020-datasets/idc_train.h5')
+x_test_path = get_file('idc_test.h5','https://storage.googleapis.com/cpe428-fall2020-datasets/idc_test.h5')
 
-x, xtest, y, ytest = train_test_split(x, y, test_size=0.15, shuffle=True, random_state=12)
-xtrain, xval, ytrain, yval = train_test_split(x, y, test_size=0.15, random_state=33)
+import h5py as h5
 
-# free memory
-del x, y
+with h5.File(x_train_path,'r') as f:
+  xtrain = f['X'][:,1:49,1:49]
+  ytrain = f['y'][:]
+with h5.File(x_test_path,'r') as f:
+  xtest = f['X'][:,1:49,1:49]
+  ytest = f['y'][:]
 
+xtrain, xval, ytrain, yval = train_test_split(xtrain, ytrain, validation_split=0.10, shuffle=True)
 
 img_shape = xtrain[0].shape
 print("img_shape", img_shape)
 print(len(xtrain), "training images,", len(xval), "validation,", len(xtest), "test")
 
 """
-make model
+models
 """
 
+
+def xception(inpt):
+    """
+    keras xception network. see https://keras.io/api/applications/
+    """
+    base = keras.applications.Xception(include_top=False, weights=None, 
+                input_shape=inpt.shape[1:])
+    x = base(inpt)
+    x = GlobalAveragePooling2D()(x)
+
+    x = Dense(1024)(x)
+    x = ReLU()(x)
+    x = Dropout(0.4)(x)
+
+    x = Dense(256)(x)
+    x = ReLU()(x)
+    x = Dropout(0.4)(x)
+
+    return x
+
+def mobilenetv2(inpt):
+    """
+    keras mobilenetv2
+    """
+    base = keras.applications.MobileNetV2(include_top=False, weights=None,
+                input_shape=inpt.shape[1:], alpha=1.0)
+    # x = keras.applications.mobilenet_v2.preprocess_input(inpt)
+    x = base(inpt)
+    x = GlobalAveragePooling2D()(x)
+
+    x = Dense(256)(x)
+    x = ReLU()(x)
+    x = Dropout(0.5)(x)
+
+    return x
+
+
+
+def make_model(name, input_shape):
+    """
+    get model from case insensitive name
+    args:
+        model name
+        input shape (not including batch size)
+        output_confidences (bool): whether loss to output a prediction, or a 
+            softmax confidence for each string
+    """
+    inpt = Input(input_shape)
+
+    name = name.lower()
+    if name == "xception":
+        x = xception(inpt)
+    elif name == "mobilenetv2":
+        x = mobilenetv2(inpt)
+    else:
+        raise ValueError("no model named '" + name + "'")
+
+    # all models output a vector of size 256
+    x = Dense(64)(x)
+    x = ReLU()(x)
+    x = Dropout(0.4)(x)
+
+    x = Dense(16)(x)
+    x = ReLU()(x)
+    x = Dropout(0.4)(x)
+
+    x = Dense(1)(x)
+    x = ReLU()(x)
+    x = Activation('sigmoid')(x)
+
+    return Model(inpt, x)
+
+
+"""
+run training
+"""
 
 if not args.load:
 
@@ -103,11 +183,6 @@ if not args.load:
             keras.metrics.FalseNegatives(),            
         ],
     )
-
-
-    """
-    train model
-    """
 
     def lr_sched(epoch, lr):
         if epoch == 0:
